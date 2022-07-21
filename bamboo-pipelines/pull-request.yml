@@ -1,0 +1,295 @@
+---
+version: 2
+plan:
+  project-key: ITSP
+  key: PR
+  name: pull-request
+  description: pull-request pipeline
+stages:
+- Validation Steps:
+    manual: false
+    final: false
+    jobs:
+    - Validation Tasks
+- Deployment to Test:
+    manual: true
+    final: false
+    jobs:
+    - Deployment to SfRefresh
+Validation Tasks:
+  key: JOB1
+  other:
+    clean-working-dir: true
+    all-other-apps:
+      custom:
+        auto: {}
+        buildHangingConfig.enabled: 'false'
+  docker:
+    image: 990750709598.dkr.ecr.eu-west-2.amazonaws.com/sfdx-with-plugins:1.4.2-prod
+    volumes:
+      ${bamboo.working.directory}: ${bamboo.working.directory}
+      ${bamboo.tmp.directory}: ${bamboo.tmp.directory}
+    docker-run-arguments: []
+  tasks:
+  - clean
+  - checkout:
+      repository: Platform
+      path: repo
+      force-clean-build: 'true'
+      description: Checkout
+  - checkout:
+      repository: nhs-sts-devops
+      path: devops
+      force-clean-build: 'true'
+      description: Checkout
+  - script:
+      interpreter: SHELL
+      scripts:
+      - |-
+        chmod +x devops/setup-scripts/svc-setup.sh
+        chmod +x devops/validation-scripts/validate-xml-syntax.sh
+        chmod +x devops/validation-scripts/validate-merge-conflicts.sh
+        chmod +x devops/validation-scripts/sfdx-validate-xml.sh
+
+        # sfdx-with-plugins 1.4.2
+        git config --global --add safe.directory $(pwd)/repo
+      description: Give Script Permissions and Add Safe Repo
+  - script:
+      interpreter: SHELL
+      file: devops/setup-scripts/svc-setup.sh
+      argument: ${bamboo.base64_secret}
+      description: SVC setup
+  - script:
+      interpreter: SHELL
+      file: devops/validation-scripts/validate-xml-syntax.sh
+      argument: repo ${bamboo.repository.pr.sourceBranch} ${bamboo.repository.pr.targetBranch}
+      conditions:
+      - variable:
+          exists: bamboo.repository.pr.sourceBranch
+      description: Validate XML Syntax
+  - script:
+      interpreter: SHELL
+      file: devops/validation-scripts/validate-merge-conflicts.sh
+      argument: repo ${bamboo.repository.pr.sourceBranch} "environment/test"
+      conditions:
+      - variable:
+          exists: repository.pr.sourceBranch
+      description: Validate Merge Conflicts
+  - script:
+      interpreter: SHELL
+      file: devops/validation-scripts/sfdx-validate-xml.sh
+      argument: repo
+      description: Validate SFDX XML
+  artifact-subscriptions: []
+Deployment to SfRefresh:
+  key: DTT
+  docker:
+    image: 990750709598.dkr.ecr.eu-west-2.amazonaws.com/sfdx-with-plugins:1.4.2-prod
+    volumes:
+      ${bamboo.working.directory}: ${bamboo.working.directory}
+      ${bamboo.tmp.directory}: ${bamboo.tmp.directory}
+    docker-run-arguments: []
+  tasks:
+  - clean:
+      description: Clean working directory
+  - checkout:
+      path: repo
+      force-clean-build: 'true'
+      description: Checkout
+  - checkout:
+      repository: nhs-sts-devops
+      path: devops
+      force-clean-build: 'true'
+      description: Checkout
+  - script:
+      interpreter: SHELL
+      scripts:
+      - |-
+        chmod +x devops/setup-scripts/svc-setup.sh
+        chmod +x devops/util-scripts/sfdx-auth.sh
+        chmod +x devops/util-scripts/auto-merge-environments.sh
+        chmod +x devops/util-scripts/delete-obsolete-flows.sh
+        chmod +x devops/validation-scripts/validate-diff-change.sh
+        chmod +x devops/util-scripts/convert-source-to-mdapi.sh
+        chmod +x devops/validation-scripts/search-for-invalid-metadata.sh
+        chmod +x devops/deploy-scripts/deploy-to-default-org.sh
+        chmod +x devops/util-scripts/give-profile-access-to-all-fields.sh
+
+        chmod +x devops/util-scripts/delete-obsolete-flows-platform.sh
+        chmod +x devops/validation-scripts/validate-diff-change-platform.sh
+        chmod +x devops/util-scripts/convert-source-to-mdapi-platform.sh
+
+        # sfdx-with-plugins 1.4.2
+        git config --global --add safe.directory $(pwd)/repo
+      description: Give Script Permissions and Add Safe Repo
+  - script:
+      interpreter: SHELL
+      file: devops/setup-scripts/svc-setup.sh
+      argument: ${bamboo.base64_secret}
+      description: SVC setup
+  - script:
+      interpreter: SHELL
+      file: devops/util-scripts/sfdx-auth.sh
+      argument: ${bamboo.DHUB_CLIENT_CERT_secret} ${bamboo.TEST_CLIENT_ID} ${bamboo.TEST_INSTANCE_URL} ${bamboo.TEST_USERNAME} qa-sandbox
+      description: SFDX Authenticate
+  - script:
+      interpreter: SHELL
+      file: devops/util-scripts/auto-merge-environments.sh
+      argument: repo ${bamboo.repository.branch.name} "environment/test"
+      description: Auto Merge Environments
+  - script:
+      interpreter: SHELL
+      scripts:
+      - sfdx force:apex:execute -f devops/apex-scripts/delete-all-flow-interviews.apex --targetusername qa-sandbox
+      description: Delete All Flow Interviews
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+  - script:
+      interpreter: SHELL
+      file: devops/validation-scripts/validate-diff-change-platform.sh
+      argument: repo "develop" "environment/test"
+      description: Validate Diff Change
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+  - script:
+      interpreter: SHELL
+      scripts:
+      - node devops/util-scripts/replace-diff-with-current-version.js repo
+      description: Replace Diff with Current Version
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+  - script:
+      interpreter: SHELL
+      file: devops/util-scripts/convert-source-to-mdapi-platform.sh
+      argument: repo "mdapi/diff-package/force-app"
+      environment: __REPLACE_WITH_TAT_PREFIX__=${bamboo.TAT_PREFIX}
+      description: Convert Source to MDAPI
+  - script:
+      interpreter: SHELL
+      scripts:
+      - |-
+        cd mdapi/diff-package
+
+        if [[ -f destructiveChanges.xml ]]; then
+            mv destructiveChanges.xml ../deploy
+        fi
+      working-dir: repo
+      description: Move destructiveChanges.xml
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+  - script:
+      interpreter: SHELL
+      file: devops/validation-scripts/search-for-invalid-metadata.sh
+      argument: -r repo -s mdapi/deploy/customMetadata/
+      description: Search for Invalid Metadata
+  - script:
+      interpreter: SHELL
+      file: devops/deploy-scripts/deploy-to-default-org.sh
+      argument: repo
+      description: Deploy to Default Org
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+# com.atlassian.bamboo.plugins.scripttask:task.builder.script is disabled. This state is not supported at YAML
+  - script:
+      interpreter: SHELL
+      scripts:
+      - |-
+        echo "Branch ${bamboo.repository.branch.name}"
+        echo "Build ${bamboo.buildNumber}"
+      description: Test Was Successful
+  artifacts:
+  - name: Deploy package
+    location: repo/mdapi/deploy
+    pattern: '**'
+    shared: true
+    required: false
+  - name: Diff package
+    location: repo/mdapi/diff-package/force-app
+    pattern: '**'
+    shared: true
+    required: false
+  artifact-subscriptions: []
+variables:
+  base64_secret: BAMSCRT@0@0@7ZRIx/LN4zm04tT89/54DHb576mrUoWF1+yp6yE6UUlM3SbUdtyd5kVNKOEW44Lm8B2InzUo8FsJfHAUhGs2iGArQsTx6+VVDfxosTvrrqkbvKm7rm+C1k4EbX/mezyIlHmx0p0zXyPUhpqTwovh4Dq1PQxMbwzDbKfq/zLmvzuz5qKl1zm1pYlgAgshIen5y34cIqCNWYa7m2KkpzsTkNoFWeQZmb8xyN5S8ExeWdvZOqcrADUI4Q4Hhfa0Msstsm/NKR8fWhKMZ1r6QC+wRuZdsIeq1+ZJGoCDyv8B+r5+sRt62h43+UXn4W4uRdSyC29W+ohe6opF5XJGdeLrLHG3tw6UDDjqe6eEP8w4HfjL/GPyy9Jj232SPluQQEwu4t444gnEwNsMUiF+xCNRnof3IM4h0u56Rt3ujBc6REwfmi3Y5gqiIZsmV3XpJZSQkw7cGP0lyLDQQMD3RKmvPxssD3wb8SfXNJ8Sa3Lhm99QVK4o88QWkXEccSkrQF9k2yCdewWSB/cbwHG/MeV5lUvogmh0mit61ZcYLG/LZ9Js0Pt3jYdBFlrKoUr02m0Jkess0nef2k5XkQWqNs33EGoDhoRxb8FMbxEluPmXX4gjsXme2AcYFdqlIzdyKl/m8ZA9iY6udDO+UzFjtivJTcfjC1XY79L8rcRoljrVXkVrwyXNhCVpeftHWrz1Krq6Nm2BFxovtTc4AQfXcbIYv1L817aqbrNES2M84Ndckm4JlsT/C3yaPt67DfXwTMTfvftscxbkX264TPwhbqBeRrhDfSRZ4vdGiyTOaqdp1WhyY5QHY38hcTB+IgxyXqcF
+repositories:
+- Platform:
+    type: bitbucket-server
+    server: Bitbucket
+    project: STS
+    slug: nhs-sts-salesforce-fork-platform
+    clone-url: ssh://git@bitbucket.collab.test-and-trace.nhs.uk:7999/sts/nhs-sts-salesforce-fork-platform.git
+    public-key: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCi/5SeRDX6czXkmffStitcE3qCNWDm2VyBJCRN7u9Dj+Sd21EzANl8yac1ObDrVkJHg87pONo09Jf8Y6Pvqxwh2wv+s11MttWBq2vmecpUuz/WZVYnj1m7F9NQrcY81TsntELIAKtMDkVFchG7eiIh57Q009dEiBsAhbN9zezoEn570r4o5eFlOC48GYF01657DtkcGblVsoke+mHyW6T1FWuTCcLShQX62U+bsscf/iedcpe5l8vgSF3HNHm+eDC8yERbkqwDZGTHuSw3naAU/U4hGnEFBZBOXTxFYksBQL4Dm8Idt5Sl6Gl/2Vxc5KtzAXqsUcUJcIg3jwZ/fDEX https://bamboo.collab.test-and-trace.nhs.uk
+    private-key: BAMSCRT@0@0@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
+    branch: develop
+    command-timeout-minutes: '180'
+    use-shallow-clones: 'false'
+    cache-on-agents: 'false'
+    submodules: 'false'
+    ssh-key-applies-to-submodules: 'true'
+    verbose-logs: 'false'
+    fetch-all: 'true'
+    lfs: 'false'
+    viewer:
+      com.atlassian.bamboo.plugins.stash.atlassian-bamboo-plugin-stash:bbServerViewer: {}
+- nhs-sts-devops:
+    type: bitbucket-server
+    server: Bitbucket
+    project: STS
+    slug: nhs-sts-devops
+    clone-url: ssh://git@bitbucket.collab.test-and-trace.nhs.uk:7999/sts/nhs-sts-devops.git
+    public-key: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDdt3kX2OW0P+H1b1DY1NmDblJkImDeYF6OjicZE/TqYS5mfxvmE/a6OFqo5+4VmxRhfiC/ggrh2BO/cxHJu+VGODMILvUj9iRF+O00ieshklEBS6YgRIlSjbfqAEei5YFcHv1E/0Hfesv7k76wDz8kZfP7mtgmuVWMgo7kGkQxcN3xfwob3UiVsNE8tZBE+XdB7YU2yjh2D07Korir1xKdNUefJ1s/bTgVmJeJMOtWtrKpObXR0I29bhKub1JZkx3ooniKF7CjKlCBmCyMh7yPECaNer/YNbDbLsGxgKIM2LOmurcyS4+CD9kqmJgRgL58OBBXCvk1MWISicm4Twf5 https://bamboo.collab.test-and-trace.nhs.uk
+    private-key: BAMSCRT@0@0@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
+    branch: master
+    command-timeout-minutes: '180'
+    use-shallow-clones: 'false'
+    cache-on-agents: 'false'
+    submodules: 'false'
+    ssh-key-applies-to-submodules: 'false'
+    verbose-logs: 'false'
+    fetch-all: 'false'
+    lfs: 'false'
+    viewer:
+      com.atlassian.bamboo.plugins.stash.atlassian-bamboo-plugin-stash:bbServerViewer: {}
+triggers:
+- polling:
+    period: '180'
+    description: PR trigger
+    repositories:
+    - Platform
+branches:
+  create:
+    for-pull-request:
+      accept-fork: false
+  delete:
+    after-deleted-days: 7
+    after-inactive-days: 30
+  link-to-jira: true
+notifications: []
+labels: []
+dependencies:
+  require-all-stages-passing: false
+  enabled-for-branches: true
+  block-strategy: none
+  plans: []
+other:
+  concurrent-build-plugin: system-default
+---
+version: 2
+plan:
+  key: ITSP-PR
+plan-permissions:
+- users:
+  - Joao.Vale@test-and-trace.nhs.uk
+  - Joel.Ferreira@test-and-trace.nhs.uk
+  - Joao.Casanova@test-and-trace.nhs.uk
+  - ricardo.nevessilva@test-and-trace.nhs.uk
+  permissions:
+  - view
+  - edit
+  - build
+  - clone
+  - admin
+- roles:
+  - logged-in
+  permissions:
+  - view
+  - build
+...
